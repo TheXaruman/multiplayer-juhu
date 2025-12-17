@@ -117,11 +117,6 @@
                 </div>
             </div>
             
-            <!-- Debug Log -->
-            <details style="margin-top: 20px;">
-                <summary style="color: #64748b; font-size: 12px; cursor: pointer;">🔧 Debug Log</summary>
-                <div id="debug-log" style="margin-top: 10px; padding: 10px; background: rgba(0,0,0,0.5); border-radius: 4px; max-height: 150px; overflow-y: auto; font-family: monospace; font-size: 11px; color: #94a3b8;"></div>
-            </details>
         </div>
     </div>
 
@@ -160,11 +155,13 @@
     <div id="lobby-waiting" class="screen hidden">
         <div class="bg-gradient"></div>
         <div class="grid-overlay"></div>
+        
+        <button class="back-btn" onclick="gameManager.goToMenu()">← ZURÜCK</button>
 
         <div class="panel">
             <div class="panel-title">VERBINDE...</div>
             
-            <div class="status waiting">
+            <div class="status waiting" id="waiting-status">
                 <span class="spinner"></span> Verbinde zum Spiel...
             </div>
         </div>
@@ -212,6 +209,15 @@
                 <button class="btn" onclick="gameManager.goToMenu()">MENÜ</button>
             </div>
         </div>
+    </div>
+
+    <!-- GLOBALES DEBUG LOG -->
+    <div id="global-debug" style="position: fixed; bottom: 10px; left: 10px; right: 10px; max-height: 200px; background: rgba(0,0,0,0.95); border: 1px solid #a855f7; border-radius: 8px; padding: 10px; font-family: monospace; font-size: 11px; color: #94a3b8; overflow-y: auto; z-index: 9999;">
+        <div style="display: flex; justify-content: space-between; margin-bottom: 8px;">
+            <span style="color: #a855f7; font-weight: bold;">🔧 DEBUG LOG</span>
+            <button onclick="document.getElementById('global-debug').style.display='none'" style="background: none; border: none; color: #64748b; cursor: pointer;">✕</button>
+        </div>
+        <div id="debug-log"></div>
     </div>
 
     <!-- JavaScript Modules -->
