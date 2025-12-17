@@ -1,0 +1,33 @@
+# Netlify Konfiguration für Guardian Slayer
+
+[build]
+  # Kein Build-Prozess nötig - statische Dateien
+  publish = "."
+
+# Headers für bessere Performance und Sicherheit
+[[headers]]
+  for = "/*"
+  [headers.values]
+    # CORS für PeerJS
+    Access-Control-Allow-Origin = "*"
+    # Caching für statische Assets
+    Cache-Control = "public, max-age=3600"
+
+[[headers]]
+  for = "/*.js"
+  [headers.values]
+    Content-Type = "application/javascript"
+    Cache-Control = "public, max-age=86400"
+
+[[headers]]
+  for = "/*.css"
+  [headers.values]
+    Content-Type = "text/css"
+    Cache-Control = "public, max-age=86400"
+
+# Redirects - alle Routen zur index.html
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
+
