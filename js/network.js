@@ -14,6 +14,8 @@ class NetworkManager {
         this.lastPing = 0;
         this.latency = 0;
         this.pingInterval = null;
+        this.retryCount = 0;
+        this.maxRetries = 3;
         
         // Callbacks
         this.onConnected = null;
@@ -39,15 +41,49 @@ class NetworkManager {
      */
     log(msg, data = null) {
         const timestamp = new Date().toLocaleTimeString();
-        const logMsg = data ? `${msg} ${JSON.stringify(data)}` : msg;
+        const logMsg = data ? `${msg} ${typeof data === 'string' ? data : JSON.stringify(data)}` : msg;
         console.log(`[${timestamp}] 🌐 ${logMsg}`);
         
         // Ins UI schreiben wenn vorhanden
         const debugLog = document.getElementById('debug-log');
         if (debugLog) {
-            debugLog.innerHTML += `<div>[${timestamp}] ${msg}</div>`;
+            const div = document.createElement('div');
+            div.textContent = `[${timestamp}] ${msg}`;
+            debugLog.appendChild(div);
             debugLog.scrollTop = debugLog.scrollHeight;
         }
+    }
+
+    /**
+     * PeerJS Konfiguration
+     */
+    getPeerConfig() {
+        return {
+            debug: 2,
+            config: {
+                iceServers: [
+                    { urls: 'stun:stun.l.google.com:19302' },
+                    { urls: 'stun:stun1.l.google.com:19302' },
+                    { urls: 'stun:global.stun.twilio.com:3478' },
+                    // TURN Server für NAT Traversal
+                    {
+                        urls: 'turn:openrelay.metered.ca:80',
+                        username: 'openrelayproject',
+                        credential: 'openrelayproject'
+                    },
+                    {
+                        urls: 'turn:openrelay.metered.ca:443',
+                        username: 'openrelayproject',
+                        credential: 'openrelayproject'
+                    },
+                    {
+                        urls: 'turn:openrelay.metered.ca:443?transport=tcp',
+                        username: 'openrelayproject',
+                        credential: 'openrelayproject'
+                    }
+                ]
+            }
+        };
     }
 
     /**
@@ -58,158 +94,59 @@ class NetworkManager {
             this.sessionId = this.generateSessionId();
             this.isHost = true;
             
-            this.log('Erstelle Spiel mit Session-ID: ' + this.sessionId);
+            const peerId = 'gs-' + this.sessionId; // gs = guardian slayer
+            this.log('Erstelle Spiel: ' + this.sessionId);
+            this.log('Peer-ID wird: ' + peerId);
             
-            // PeerJS mit eigener ID initialisieren
-            // Verwende den kostenlosen PeerJS Cloud Server
-            this.peer = new Peer('guardian-' + this.sessionId, {
-                debug: 2,  // Mehr Debug-Output
-                config: {
-                    iceServers: [
-                        { urls: 'stun:stun.l.google.com:19302' },
-                        { urls: 'stun:stun1.l.google.com:19302' },
-                        { urls: 'stun:stun2.l.google.com:19302' },
-                        { urls: 'stun:stun3.l.google.com:19302' },
-                        { urls: 'stun:stun4.l.google.com:19302' },
-                        // Freie TURN Server für bessere NAT-Traversal
-                        {
-                            urls: 'turn:openrelay.metered.ca:80',
-                            username: 'openrelayproject',
-                            credential: 'openrelayproject'
-                        },
-                        {
-                            urls: 'turn:openrelay.metered.ca:443',
-                            username: 'openrelayproject',
-                            credential: 'openrelayproject'
-                        }
-                    ]
-                }
-            });
+            try {
+                this.peer = new Peer(peerId, this.getPeerConfig());
+            } catch (e) {
+                this.log('❌ Fehler beim Erstellen des Peers: ' + e.message);
+                reject(e);
+                return;
+            }
 
             this.peer.on('open', (id) => {
-                this.log('✅ Host registriert mit ID: ' + id);
+                this.log('✅ Registriert als: ' + id);
                 resolve(this.sessionId);
             });
 
             this.peer.on('connection', (conn) => {
-                this.log('🔌 Spieler verbindet sich...', conn.peer);
+                this.log('🔌 Eingehende Verbindung von: ' + conn.peer);
                 this.connection = conn;
-                this.setupConnection(true); // true = host receiving connection
+                
+                // Direkt Handler einrichten
+                conn.on('open', () => {
+                    this.log('✅ Verbindung zu Spieler 2 offen!');
+                    this.connected = true;
+                    this.setupDataHandlers(conn);
+                    this.startPing();
+                    if (this.onConnected) this.onConnected();
+                });
+                
+                conn.on('error', (err) => {
+                    this.log('❌ Verbindungsfehler: ' + err);
+                });
+                
+                // Falls Connection schon offen ist
+                if (conn.open) {
+                    this.log('✅ Verbindung war bereits offen!');
+                    this.connected = true;
+                    this.setupDataHandlers(conn);
+                    this.startPing();
+                    if (this.onConnected) this.onConnected();
+                }
             });
 
             this.peer.on('error', (err) => {
-                this.log('❌ PeerJS Fehler:', err);
+                this.log('❌ Peer Fehler: ' + err.type + ' - ' + err.message);
+                
                 if (err.type === 'unavailable-id') {
-                    // Session-ID bereits vergeben, neue generieren
+                    this.log('Session-ID vergeben, generiere neue...');
                     this.peer.destroy();
                     this.sessionId = this.generateSessionId();
                     this.createGame().then(resolve).catch(reject);
-                } else {
-                    reject(err);
-                }
-            });
-
-            this.peer.on('disconnected', () => {
-                this.log('⚠️ Vom PeerJS Server getrennt, versuche Reconnect...');
-                this.peer.reconnect();
-            });
-
-            // Timeout
-            setTimeout(() => {
-                if (!this.peer || !this.peer.open) {
-                    this.log('❌ Timeout beim Erstellen des Spiels');
-                    reject(new Error('Verbindung zum Server fehlgeschlagen. Bitte Seite neu laden.'));
-                }
-            }, 15000);
-        });
-    }
-
-    /**
-     * Tritt einem bestehenden Spiel bei
-     */
-    async joinGame(sessionId) {
-        return new Promise((resolve, reject) => {
-            this.sessionId = sessionId.toUpperCase().trim();
-            this.isHost = false;
-            
-            this.log('Verbinde zu Spiel: ' + this.sessionId);
-            
-            this.peer = new Peer({
-                debug: 2,
-                config: {
-                    iceServers: [
-                        { urls: 'stun:stun.l.google.com:19302' },
-                        { urls: 'stun:stun1.l.google.com:19302' },
-                        { urls: 'stun:stun2.l.google.com:19302' },
-                        { urls: 'stun:stun3.l.google.com:19302' },
-                        { urls: 'stun:stun4.l.google.com:19302' },
-                        {
-                            urls: 'turn:openrelay.metered.ca:80',
-                            username: 'openrelayproject',
-                            credential: 'openrelayproject'
-                        },
-                        {
-                            urls: 'turn:openrelay.metered.ca:443',
-                            username: 'openrelayproject',
-                            credential: 'openrelayproject'
-                        }
-                    ]
-                }
-            });
-
-            this.peer.on('open', (myId) => {
-                this.log('✅ Eigene Peer-ID: ' + myId);
-                this.log('🔌 Verbinde zu: guardian-' + this.sessionId);
-                
-                this.connection = this.peer.connect('guardian-' + this.sessionId, {
-                    reliable: true,
-                    serialization: 'json'
-                });
-
-                if (!this.connection) {
-                    reject(new Error('Konnte keine Verbindung erstellen'));
-                    return;
-                }
-
-                this.connection.on('open', () => {
-                    this.log('✅ Verbindung zum Host hergestellt!');
-                    this.connected = true;
-                    
-                    // Data und Close Handler einrichten
-                    this.setupConnectionHandlers();
-                    
-                    // Callback auslösen
-                    if (this.onConnected) {
-                        this.onConnected();
-                    }
-                    
-                    // Ping starten
-                    this.startPing();
-                    
-                    resolve();
-                });
-
-                this.connection.on('error', (err) => {
-                    this.log('❌ Verbindungsfehler:', err);
-                    reject(new Error('Verbindungsfehler: ' + err.message));
-                });
-                
-                // Timeout für die Verbindung
-                setTimeout(() => {
-                    if (!this.connected) {
-                        this.log('❌ Verbindungs-Timeout');
-                        reject(new Error('Verbindung fehlgeschlagen. Ist die Session-ID korrekt?'));
-                    }
-                }, 20000);
-            });
-
-            this.peer.on('error', (err) => {
-                this.log('❌ PeerJS Fehler:', err);
-                if (err.type === 'peer-unavailable') {
-                    reject(new Error('Spiel nicht gefunden. Überprüfe die Session-ID.'));
-                } else if (err.type === 'network') {
-                    reject(new Error('Netzwerkfehler. Überprüfe deine Internetverbindung.'));
-                } else if (err.type === 'server-error') {
+                } else if (err.type === 'server-error' || err.type === 'socket-error') {
                     reject(new Error('Server nicht erreichbar. Bitte später erneut versuchen.'));
                 } else {
                     reject(new Error('Fehler: ' + err.type));
@@ -217,58 +154,161 @@ class NetworkManager {
             });
 
             this.peer.on('disconnected', () => {
-                this.log('⚠️ Vom PeerJS Server getrennt');
+                this.log('⚠️ Vom Server getrennt, reconnecte...');
+                if (this.peer && !this.peer.destroyed) {
+                    this.peer.reconnect();
+                }
+            });
+
+            // Timeout
+            setTimeout(() => {
+                if (this.peer && !this.peer.open) {
+                    this.log('❌ Timeout - Server antwortet nicht');
+                    reject(new Error('Server Timeout. Bitte Seite neu laden.'));
+                }
+            }, 20000);
+        });
+    }
+
+    /**
+     * Tritt einem bestehenden Spiel bei
+     */
+    async joinGame(sessionId) {
+        this.sessionId = sessionId.toUpperCase().trim();
+        this.isHost = false;
+        this.retryCount = 0;
+        
+        return this.attemptJoin();
+    }
+    
+    async attemptJoin() {
+        return new Promise((resolve, reject) => {
+            const targetPeerId = 'gs-' + this.sessionId;
+            this.log(`Verbindungsversuch ${this.retryCount + 1}/${this.maxRetries + 1}`);
+            this.log('Suche Host: ' + targetPeerId);
+            
+            // Cleanup vorheriger Peer falls vorhanden
+            if (this.peer) {
+                this.peer.destroy();
+            }
+            
+            try {
+                this.peer = new Peer(this.getPeerConfig());
+            } catch (e) {
+                this.log('❌ Peer Erstellung fehlgeschlagen: ' + e.message);
+                reject(e);
+                return;
+            }
+
+            let connectionTimeout = null;
+            let resolved = false;
+            
+            this.peer.on('open', (myId) => {
+                this.log('✅ Eigene ID: ' + myId);
+                this.log('🔌 Verbinde zu ' + targetPeerId + '...');
+                
+                try {
+                    this.connection = this.peer.connect(targetPeerId, {
+                        reliable: true,
+                        serialization: 'json'
+                    });
+                } catch (e) {
+                    this.log('❌ Connect fehlgeschlagen: ' + e.message);
+                    reject(e);
+                    return;
+                }
+
+                if (!this.connection) {
+                    this.log('❌ Connection ist null');
+                    reject(new Error('Verbindung konnte nicht erstellt werden'));
+                    return;
+                }
+
+                this.connection.on('open', () => {
+                    if (resolved) return;
+                    resolved = true;
+                    clearTimeout(connectionTimeout);
+                    
+                    this.log('✅ Verbunden mit Host!');
+                    this.connected = true;
+                    this.setupDataHandlers(this.connection);
+                    this.startPing();
+                    
+                    if (this.onConnected) this.onConnected();
+                    resolve();
+                });
+
+                this.connection.on('error', (err) => {
+                    this.log('❌ Connection Error: ' + err);
+                });
+                
+                // Connection timeout
+                connectionTimeout = setTimeout(() => {
+                    if (!resolved && !this.connected) {
+                        this.log('⏱️ Verbindungs-Timeout');
+                        
+                        // Retry?
+                        if (this.retryCount < this.maxRetries) {
+                            this.retryCount++;
+                            this.log('🔄 Versuche erneut...');
+                            this.peer.destroy();
+                            setTimeout(() => {
+                                this.attemptJoin().then(resolve).catch(reject);
+                            }, 1000);
+                        } else {
+                            reject(new Error('Spiel nicht gefunden. Überprüfe die Session-ID.'));
+                        }
+                    }
+                }, 8000);
+            });
+
+            this.peer.on('error', (err) => {
+                this.log('❌ Peer Fehler: ' + err.type);
+                clearTimeout(connectionTimeout);
+                
+                if (resolved) return;
+                
+                if (err.type === 'peer-unavailable') {
+                    // Retry?
+                    if (this.retryCount < this.maxRetries) {
+                        this.retryCount++;
+                        this.log('🔄 Host nicht gefunden, versuche erneut... (' + this.retryCount + ')');
+                        this.peer.destroy();
+                        setTimeout(() => {
+                            this.attemptJoin().then(resolve).catch(reject);
+                        }, 2000);
+                    } else {
+                        reject(new Error('Spiel nicht gefunden. Ist der Host noch verbunden?'));
+                    }
+                } else if (err.type === 'network' || err.type === 'server-error') {
+                    reject(new Error('Netzwerkfehler. Überprüfe deine Internetverbindung.'));
+                } else {
+                    reject(new Error('Fehler: ' + err.type));
+                }
+            });
+
+            this.peer.on('disconnected', () => {
+                this.log('⚠️ Vom Server getrennt');
             });
         });
     }
 
     /**
-     * Richtet die Verbindung ein (für Host wenn Spieler beitritt)
+     * Richtet Data Handler ein
      */
-    setupConnection(isHostReceiving = false) {
-        if (!this.connection) {
-            this.log('❌ Keine Connection zum Setup');
-            return;
-        }
-
-        if (isHostReceiving) {
-            // Host empfängt Verbindung - Connection könnte schon offen sein
-            if (this.connection.open) {
-                this.log('✅ Verbindung bereits offen (Host)');
-                this.connected = true;
-                this.setupConnectionHandlers();
-                if (this.onConnected) this.onConnected();
-                this.startPing();
-            } else {
-                this.connection.on('open', () => {
-                    this.log('✅ Verbindung geöffnet (Host)');
-                    this.connected = true;
-                    this.setupConnectionHandlers();
-                    if (this.onConnected) this.onConnected();
-                    this.startPing();
-                });
-            }
-        }
-    }
-
-    /**
-     * Richtet Data/Close/Error Handler ein
-     */
-    setupConnectionHandlers() {
-        if (!this.connection) return;
-
-        this.connection.on('data', (data) => {
+    setupDataHandlers(conn) {
+        conn.on('data', (data) => {
             this.handleMessage(data);
         });
 
-        this.connection.on('close', () => {
+        conn.on('close', () => {
             this.log('🔌 Verbindung geschlossen');
             this.connected = false;
             if (this.onDisconnected) this.onDisconnected();
         });
 
-        this.connection.on('error', (err) => {
-            this.log('❌ Verbindungsfehler:', err);
+        conn.on('error', (err) => {
+            this.log('❌ Data Error: ' + err);
             if (this.onError) this.onError(err);
         });
     }
@@ -287,58 +327,32 @@ class NetworkManager {
     }
 
     /**
-     * Sendet Daten an den anderen Spieler
+     * Sendet Daten
      */
     send(data) {
         if (this.connection && this.connection.open) {
             try {
                 this.connection.send(data);
             } catch (e) {
-                this.log('❌ Sendefehler:', e);
+                this.log('❌ Send Error: ' + e.message);
             }
         }
     }
 
-    /**
-     * Sendet Spielzustand
-     */
     sendGameState(state) {
-        this.send({
-            type: 'gameState',
-            timestamp: Date.now(),
-            ...state
-        });
+        this.send({ type: 'gameState', timestamp: Date.now(), ...state });
     }
 
-    /**
-     * Sendet Input
-     */
     sendInput(input) {
-        this.send({
-            type: 'input',
-            timestamp: Date.now(),
-            input: input
-        });
+        this.send({ type: 'input', timestamp: Date.now(), input: input });
     }
 
-    /**
-     * Sendet Event Nachrichten
-     */
     sendEvent(eventType, eventData) {
-        this.send({
-            type: 'event',
-            eventType: eventType,
-            data: eventData
-        });
+        this.send({ type: 'event', eventType: eventType, data: eventData });
     }
 
-    /**
-     * Ping für Latenz-Messung
-     */
     startPing() {
-        if (this.pingInterval) {
-            clearInterval(this.pingInterval);
-        }
+        if (this.pingInterval) clearInterval(this.pingInterval);
         this.pingInterval = setInterval(() => {
             if (this.connected) {
                 this.send({ type: 'ping', timestamp: Date.now() });
@@ -346,31 +360,19 @@ class NetworkManager {
         }, 2000);
     }
 
-    /**
-     * Beendet die Verbindung
-     */
     disconnect() {
         this.log('Trenne Verbindung...');
-        
         if (this.pingInterval) {
             clearInterval(this.pingInterval);
             this.pingInterval = null;
         }
-        
-        if (this.connection) {
-            this.connection.close();
-        }
-        if (this.peer) {
-            this.peer.destroy();
-        }
+        if (this.connection) this.connection.close();
+        if (this.peer) this.peer.destroy();
         this.connected = false;
         this.connection = null;
         this.peer = null;
     }
 
-    /**
-     * Gibt zurück ob Verbindung aktiv ist
-     */
     isConnected() {
         return this.connected && this.connection && this.connection.open;
     }
