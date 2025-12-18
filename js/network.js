@@ -37,20 +37,16 @@ class NetworkManager {
     }
 
     /**
-     * Logging Helper - schreibt auch ins UI Debug Log
+     * Logging Helper - nutzt globale debugLog Funktion
      */
     log(msg, data = null) {
-        const timestamp = new Date().toLocaleTimeString();
-        const logMsg = data ? `${msg} ${typeof data === 'string' ? data : JSON.stringify(data)}` : msg;
-        console.log(`[${timestamp}] 🌐 ${logMsg}`);
+        const fullMsg = data ? `${msg} ${typeof data === 'string' ? data : JSON.stringify(data)}` : msg;
         
-        // Ins UI schreiben wenn vorhanden
-        const debugLog = document.getElementById('debug-log');
-        if (debugLog) {
-            const div = document.createElement('div');
-            div.textContent = `[${timestamp}] ${msg}`;
-            debugLog.appendChild(div);
-            debugLog.scrollTop = debugLog.scrollHeight;
+        // Globale Debug-Funktion nutzen falls vorhanden
+        if (typeof window.debugLog === 'function') {
+            window.debugLog(fullMsg);
+        } else {
+            console.log('[NET]', fullMsg);
         }
     }
 

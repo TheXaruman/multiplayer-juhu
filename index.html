@@ -224,6 +224,32 @@
     <script src="js/classes.js"></script>
     <script src="js/network.js"></script>
     <script src="js/game.js"></script>
+    
+    <!-- Debug Test -->
+    <script>
+        // Globale Debug Funktion
+        window.debugLog = function(msg) {
+            const log = document.getElementById('debug-log');
+            if (log) {
+                const time = new Date().toLocaleTimeString();
+                const div = document.createElement('div');
+                div.textContent = `[${time}] ${msg}`;
+                log.appendChild(div);
+                log.scrollTop = log.scrollHeight;
+            }
+            console.log('[DEBUG]', msg);
+        };
+        
+        // Test beim Laden
+        debugLog('✅ Seite geladen');
+        debugLog('PeerJS verfügbar: ' + (typeof Peer !== 'undefined'));
+        
+        // Fehler abfangen
+        window.onerror = function(msg, url, line) {
+            debugLog('❌ JS FEHLER: ' + msg + ' (Zeile ' + line + ')');
+            return false;
+        };
+    </script>
 
 </body>
 </html>
