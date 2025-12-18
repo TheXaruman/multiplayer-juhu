@@ -355,17 +355,29 @@ class GameManager {
     // ============================================================
     
     async hostGame() {
+        debugLog('hostGame() aufgerufen');
+        
         this.showScreen('lobbyHost');
+        
+        if (!this.elements.sessionId) {
+            debugLog('❌ FEHLER: sessionId Element nicht gefunden!');
+            return;
+        }
+        
         this.elements.sessionId.textContent = '...';
         this.elements.connectionStatus.textContent = 'Erstelle Spiel...';
         this.elements.connectionStatus.className = 'status waiting';
         
+        debugLog('Rufe network.createGame() auf...');
+        
         try {
             const sessionId = await network.createGame();
+            debugLog('✅ Spiel erstellt: ' + sessionId);
             this.elements.sessionId.textContent = sessionId;
             this.elements.connectionStatus.innerHTML = '<span class="spinner"></span> Warte auf Spieler 2...';
             this.playerNum = 1;
         } catch (err) {
+            debugLog('❌ Fehler: ' + err.message);
             this.elements.connectionStatus.textContent = 'Fehler: ' + err.message;
             this.elements.connectionStatus.className = 'status error';
         }
@@ -378,9 +390,13 @@ class GameManager {
     }
 
     async joinGame() {
+        debugLog('joinGame() aufgerufen');
+        
         const sessionId = this.elements.sessionInput.value.trim().toUpperCase();
+        debugLog('Session-ID: ' + sessionId);
         
         if (!sessionId || sessionId.length < 4) {
+            debugLog('❌ Session-ID zu kurz');
             this.elements.joinError.textContent = 'Bitte gib eine gültige Session-ID ein';
             this.elements.joinError.classList.remove('hidden');
             return;
@@ -389,11 +405,15 @@ class GameManager {
         this.elements.joinError.classList.add('hidden');
         this.showScreen('lobbyWaiting');
         
+        debugLog('Rufe network.joinGame() auf...');
+        
         try {
             await network.joinGame(sessionId);
+            debugLog('✅ Verbunden!');
             this.playerNum = 2;
             // Verbindung wird in onNetworkConnected behandelt
         } catch (err) {
+            debugLog('❌ Fehler: ' + err.message);
             this.showScreen('lobbyJoin');
             this.elements.joinError.textContent = err.message;
             this.elements.joinError.classList.remove('hidden');
